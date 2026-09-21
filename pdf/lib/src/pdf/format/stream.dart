@@ -40,9 +40,23 @@ class PdfStream {
   }
 
   void putBytes(List<int> s) {
-    _ensureCapacity(s.length);
-    _stream.setAll(_offset, s);
-    _offset += s.length;
+    final length = s.length;
+    _ensureCapacity(length);
+    if (s is TypedData) {
+      _stream.setAll(_offset, s);
+      _offset += length;
+      return;
+    }
+    // `setAll` only memcpys from typed data; for any other list — notably
+    // the `CodeUnits` view every [putString] passes — it falls back to an
+    // iterator, and that per-element `moveNext`/`current` pair is the single
+    // hottest thing in a large document. An indexed copy is about 3x faster.
+    final stream = _stream;
+    var offset = _offset;
+    for (var i = 0; i < length; i++) {
+      stream[offset++] = s[i];
+    }
+    _offset = offset;
   }
 
   void setBytes(int offset, Iterable<int> iterable) {
@@ -58,15 +72,21 @@ class PdfStream {
   Uint8List output() => _stream.sublist(0, _offset);
 
   void putString(String? s) {
-    assert(() {
-      for (final codeUnit in s!.codeUnits) {
-        if (codeUnit > 0x7f) {
-          return false;
-        }
-      }
-      return true;
-    }());
+    // An indexed scan, not a for-in over `codeUnits`: this assert runs on
+    // every operator and number in debug builds, and the CodeUnits iterator
+    // (closure + moveNext + elementAt per char) was the hottest thing in a
+    // debug-mode render profile. codeUnitAt compiles to a direct load.
+    assert(_isAscii(s!));
     putBytes(s!.codeUnits);
+  }
+
+  static bool _isAscii(String s) {
+    for (var i = 0; i < s.length; i++) {
+      if (s.codeUnitAt(i) > 0x7f) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void putComment(String s) {
