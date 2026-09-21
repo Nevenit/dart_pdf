@@ -17,9 +17,14 @@
 import 'dart:typed_data';
 
 class PdfStream {
+  /// A page-sized default; recordings and other small streams pass a small
+  /// [initialCapacity] so thousands of them stay cheap.
+  PdfStream({int initialCapacity = _grow})
+    : _stream = Uint8List(initialCapacity);
+
   static const int _grow = 65536;
 
-  Uint8List _stream = Uint8List(_grow);
+  Uint8List _stream;
 
   int _offset = 0;
 
@@ -28,7 +33,12 @@ class PdfStream {
       return;
     }
 
-    final newSize = _offset + size + _grow;
+    // Doubling growth keeps appends amortized O(1); a fixed step made large
+    // buffers quadratic to fill and small initial buffers pointless.
+    var newSize = _stream.length * 2;
+    if (newSize < _offset + size) {
+      newSize = _offset + size + _grow;
+    }
     final newBuffer = Uint8List(newSize);
     newBuffer.setAll(0, _stream);
     _stream = newBuffer;
